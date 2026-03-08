@@ -55,4 +55,4 @@ The site builder system prompt is in `prompts/site-builder-v1.md`. It was tuned 
 
 ## Live Demo
 
-[playground.newsy.us](https://playground.newsy.us)
+[build.clawpress.blog](https://build.clawpress.blog)

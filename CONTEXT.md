@@ -17,7 +17,7 @@ An agentic site builder relay server. Node.js/Express app that receives a natura
 ## Architecture
 
 ```
-[Chatbox Widget on playground.newsy.us]
+[Chatbox Widget on build.clawpress.blog]
     ↓ POST /chat
 [ClawPress Build Server (localhost:3847)]
     ↓ Claude API (tool-use loop, up to 20 iterations)
@@ -40,7 +40,7 @@ External access via Cloudflare tunnel (tunnel ID: c81b453d-144c-4b43-9a66-b8dc47
 
 ## Deployment
 
-- Live at playground.newsy.us (chatbox widget → Cloudflare tunnel → this server)
+- Live at build.clawpress.blog (chatbox widget → Cloudflare tunnel → this server)
 - Server runs on Joe's Mac (Family Computer)
 - Started via `./start.sh` or `node server.js`
 - Default port: 3847
