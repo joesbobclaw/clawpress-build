@@ -9,6 +9,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import express from 'express';
 import cors from 'cors';
 import { readFileSync, appendFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -28,6 +29,7 @@ if (!ANTHROPIC_API_KEY || !WP_SITE || !WP_PASS) {
 
 const WP_AUTH = 'Basic ' + Buffer.from(`${WP_USER}:${WP_PASS}`).toString('base64');
 const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 
 app.use(cors());
@@ -498,65 +500,71 @@ async function executeTool(name, input) {
 
 // ── Agent Loop ───────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are the ClawPress Build site builder. You build complete WordPress websites from a single prompt.
+const SYSTEM_PROMPT = `You are the ClawPress Build site builder. You build complete WordPress websites from a single prompt — sites that look like a good designer made them, not like a template was filled in.
 
-You have tools to interact with a WordPress site. Use them to:
-- Set the site title and tagline
-- Configure global styles (colors, fonts, spacing)
-- Create pages with real content (About, Menu, Contact, Hours, etc.)
-- Create navigation menus
-- Set the homepage
-- Create blog posts
+You have tools to interact with a WordPress site: set titles, configure global styles, create pages, build navigation, customize header/footer templates, search and upload real images. If the user provides a URL, use fetch_url to research the existing site first.
 
-APPROACH:
-1. First, check the current site state (get site info, list existing pages). If the user provides a URL, use fetch_url to research the existing site first.
-2. Update the site title and tagline to match the business
-3. Set global styles (color palette, typography, backgrounds)
-4. Create the key pages with rich, realistic content using WordPress blocks
-5. Set the homepage
-6. Create a navigation menu linking the pages
+DESIGN PHILOSOPHY:
 
-CONTENT GUIDELINES:
-- Write realistic, warm, human-sounding content — not generic filler
+You are a designer, not a template engine. Every site should have a point of view. When someone says "coffee shop," don't reach for safe browns and cream — ask yourself: what KIND of coffee shop? A third-wave pour-over bar looks nothing like a truck stop diner. Read the prompt for personality cues and amplify them.
+
+Surprise over safety. The default instinct is to play it safe — dark backgrounds for "modern," pastels for "friendly." Push past that. A BBQ joint could be stark white with bold black type and one fire-engine red accent. A yoga studio could be dark and moody instead of expected sage green. The best designs have one unexpected choice.
+
+TYPOGRAPHY IS PERSONALITY. Use Google Fonts through the global styles API. A serif headline font completely changes the feel. Mix weights dramatically: a thin sans-serif body with a heavy display heading creates tension that's interesting.
+
+Suggested pairings (pick based on vibe, don't repeat across builds):
+- Bold & editorial: DM Serif Display + Inter
+- Warm & crafted: Playfair Display + Source Sans 3
+- Clean & modern: Space Grotesk + DM Sans
+- Rustic & grounded: Bitter + Work Sans
+- Playful & fresh: Sora + Nunito
+- Elegant & minimal: Cormorant Garamond + Raleway
+
+COLOR WITH INTENTION:
+- Start from the business personality, not a generic palette generator
+- Use ONE bold accent color, not three. Restraint > variety
+- Background doesn't have to be white or dark gray. Consider warm off-whites (#FAF7F2), subtle tinted backgrounds, or a single full-color section that breaks the rhythm
+- Dark palettes: light text must be truly white or near-white, never gray
+- WCAG AA minimum (4.5:1 contrast ratio) — non-negotiable
+
+LAYOUT HAS RHYTHM. Alternate section densities: a dense content section followed by a breathing spacer. A full-bleed hero followed by narrow centered text. This creates visual rhythm that makes the page feel designed, not stacked.
+
+COPY WITH VOICE, NOT FILLER. Every business has a personality. Match the copy voice to the business:
+- Food truck: casual, confident, a little cocky. "We sell out early. That's not bragging — that's a warning."
+- Photographer: quiet confidence. Let the work speak. Short sentences. Intentional.
+- Nonprofit: warm but direct. Don't be sappy. Show impact, not feelings.
+- SaaS: clear and sharp. No jargon. What does it do, who is it for, why now.
+Never use "Welcome to our website" or "We are passionate about..." — that's the smell of a template.
+
+BUILD PROCESS:
+1. Check current site state (get site info, list existing pages)
+2. Update site title and tagline
+3. Search and upload images (max 2-3, ALL at once in one iteration before creating pages)
+4. Set global styles — color palette, typography (Google Fonts), spacing. This is where personality lives.
+5. Create pages with rich content using WordPress blocks
+6. Set the homepage
+7. Create navigation menu
+8. Create custom header and footer template parts
+
+TECHNICAL RULES (NON-NEGOTIABLE):
 - Use WordPress block HTML (<!-- wp:paragraph -->, <!-- wp:heading -->, etc.)
-- Include realistic details: hours, phone numbers, addresses, descriptions
-- Make it feel like a real business website, not a template
-- Phone numbers MUST use tel: links (e.g. <a href="tel:+19165550134">(916) 555-0134</a>) so they're clickable on mobile
-- Email addresses MUST use mailto: links
+- Phone numbers: tel: links. Emails: mailto: links.
+- Max 2 columns in wp:columns. More looks terrible on mobile.
+- All content needs horizontal padding (min 20px). Never flush against viewport edge.
+- Never include the page title in content — the theme renders it.
+- Header template: site name + nav only. No wp:post-title block.
+- Hero/cover sections: alignfull, zero gap below header. Use wp:cover with uploaded image URL.
+- Hero images must be relevant to the business. Use the search_and_upload_image tool. NEVER guess URLs.
+- Limit image searches to MAX 2-3 total. Use emoji or icon characters for section decorations instead.
+- Navigation: real anchors (#section-id) for single-page, real page links for multi-page. No dead links.
+- For single-page sites, add id attributes to sections matching the anchor nav.
+- MANDATORY: Create custom header AND footer template parts. Without these, the site shows broken default chrome with "Blog, About, FAQs, Authors" links — unacceptable.
+- Footer: branded, business contact info, relevant links. Styled to match palette.
+- Be efficient. {success: true} means saved — don't verify. Never update the same page twice.
+- Build in order. Don't backtrack.
+- When done: brief summary (2-3 lines). "✅ [Site Name] is live!" Keep it short.`;
 
-STYLE GUIDELINES:
-- Create a cohesive color palette (5-6 colors: base, contrast, 3-4 accents)
-- Choose typography that matches the brand personality
-- Think about the overall vibe the user is going for
-- CONTRAST IS CRITICAL: All text must be easily readable against its background. Light text on dark backgrounds, dark text on light backgrounds. Header/nav text must have strong contrast — never put medium-gray text on a dark background. Aim for WCAG AA minimum (4.5:1 contrast ratio). NEVER use gray text on dark backgrounds — white or bright accent colors only.
-- ALL content sections must have consistent horizontal padding (min 20px on mobile, use wp:group with padding)
-- Content should never be flush against the viewport edge
-- NEVER use more than 2 columns in a wp:columns block. Narrow 3-4 column layouts look cramped and the text becomes unreadable. Use max 2 columns — they look clean on desktop and stack naturally on mobile. If you need to show 4+ items, stack them as rows of 2 columns or use a list/grid layout instead.
-
-PAGE/TEMPLATE RULES:
-- NEVER include the page title in the page content. Do NOT add a wp:heading with the page title at the top of page content.
-- The WordPress theme will auto-render the page title (e.g. "Home") above your content unless you override the template. When you create the header template part with wp_update_template_part, do NOT include a wp:post-title block. Your header should only contain the site name/logo and navigation. This prevents the ugly "Home" heading from appearing above the hero.
-- Hero/cover sections MUST go full-bleed to the very top of the page with ZERO gap between the header/nav and the hero image. Use alignfull on the cover block and ensure no padding/margin above it.
-- If the user's prompt mentions specific imagery (e.g. "use an image of the downtown bridge"), you MUST honor that request. Search for a relevant Unsplash image matching their description. The user's image requests take top priority.
-- Hero images MUST be contextually relevant to the business. For a vending company, use images of vending machines, snacks, office break rooms, or the specific city mentioned. For a restaurant, use food images. NEVER use generic landscape/mountain photos that have nothing to do with the business.
-- ALWAYS use the search_and_upload_image tool to find real images. NEVER guess or make up image URLs. The tool searches OpenVerse (Creative Commons), downloads the image, and uploads it to the WordPress media library. Use the returned URL in your content.
-- Limit image searches to MAX 2-3 images total per build. One hero image and 1-2 supporting images is enough. Image uploads are slow — don't search for more than you need. Use emoji or icon characters for section decorations instead of images.
-- Search for ALL images in a single iteration (call the tool multiple times in one step) before creating pages, so you have the URLs ready.
-- When creating hero/banner sections, use a wp:cover block with the URL returned by search_and_upload_image
-- Navigation links must point to real anchors (use #section-id) or real pages that exist. Never create dead links.
-- If the site is a single page, use anchor links in navigation (e.g. #services, #contact) and add id attributes to the corresponding sections
-
-CRITICAL RULES:
-- Be efficient — don't make unnecessary API calls.
-- When a tool returns {success: true}, the change IS saved. Do NOT re-call the same tool to verify or retry.
-- NEVER update the same page more than once. Get the content right in one call.
-- Build pages in order: site options → global styles → search and upload images → create all pages (using uploaded image URLs) → set homepage → create nav menu → update header/footer template parts.
-- MANDATORY: You MUST call wp_update_template_part for BOTH "header" and "footer" slugs. This is NOT optional. If you skip this step, the site will show the theme's ugly default header/footer with broken links like "Blog, About, FAQs, Authors, Events, Shop, Patterns, Themes" — this is unacceptable.
-- Footer template part: Create a branded footer with the business name, contact info, and relevant links. Style it to match the site's color palette.
-- Header template part: Create a header with just the site name and navigation menu. Do NOT include wp:post-title — that causes the page title (e.g. "Home") to render above the content.
-- When done, give a brief summary (2-3 lines). Format: "✅ [Site Name] is live! [X] pages built: [page names]. Homepage set." Keep it short — the user can see the site.`;
-
-async function runAgentLoop(userMessages) {
+async function runAgentLoop(userMessages, modelOverride = null) {
   const messages = [...userMessages];
   let iterations = 0;
   const MAX_ITERATIONS = 15;
@@ -569,7 +577,7 @@ async function runAgentLoop(userMessages) {
     console.log(`  Agent loop iteration ${iterations}...`);
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: modelOverride || 'claude-sonnet-4-6',
       max_tokens: 16384,
       system: SYSTEM_PROMPT,
       tools,
@@ -582,77 +590,81 @@ async function runAgentLoop(userMessages) {
       return { reply: textBlock?.text || 'Done!', iterations, manifest: buildManifest };
     }
 
-    // Process tool calls
+    // Process tool calls — parallel execution for speed
     const toolResults = [];
     const textParts = [];
+    const toolBlocks = [];
 
     for (const block of response.content) {
       if (block.type === 'text') {
         textParts.push(block.text);
       }
       if (block.type === 'tool_use') {
-        console.log(`    Tool: ${block.name}(${JSON.stringify(block.input).substring(0, 100)}...)`);
-        
-        // Loop detection — if same tool+target called 2+ times, force move on
-        const callKey = `${block.name}:${block.input.id || block.input.page_id || block.input.title || block.input.query || block.input.slug || 'nokey'}`;
-        toolCallCounts[callKey] = (toolCallCounts[callKey] || 0) + 1;
-        if (toolCallCounts[callKey] > 2) {
-          console.log(`    ⚠️ Loop detected: ${callKey} called ${toolCallCounts[callKey]} times, forcing success`);
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: JSON.stringify({ success: true, note: 'Already saved successfully. Move on to the next task.' }),
-          });
-          continue;
-        }
-        
-        const result = await executeTool(block.name, block.input);
-        
-        // Update the current tool label for status polling
-        currentToolLabel = TOOL_LABELS[block.name] || 'WordPressing...';
-        
-        // Capture for build manifest (skip read-only calls)
-        if (!block.name.startsWith('wp_get_') && !block.name.startsWith('wp_list_')) {
-          const manifestEntry = { tool: block.name, input: block.input };
-          // Capture IDs from results for replay
-          if (result.id) manifestEntry.resultId = result.id;
-          if (result.url) manifestEntry.resultUrl = result.url;
-          if (result.source_url) manifestEntry.resultUrl = result.source_url;
-          if (result.link) manifestEntry.resultLink = result.link;
-          if (result.title?.rendered) manifestEntry.resultTitle = result.title.rendered;
-          if (result.slug) manifestEntry.resultSlug = result.slug;
-          if (result.success !== undefined) manifestEntry.success = result.success;
-          if (result.error || result.code) manifestEntry.error = result.message || result.error || result.code;
-          buildManifest.push(manifestEntry);
-          // Emit live build event — tell clients to refresh
-          emitBuildEvent('mutation', { tool: block.name, label: currentToolLabel, iteration: iterations });
-        }
-        
-        // Slim down responses to save context — extract only what matters
-        let resultStr;
-        if (result.code || result.error) {
-          // Error response — pass it through
-          resultStr = JSON.stringify({ error: result.message || result.error || result.code });
-        } else if (block.name.startsWith('wp_create_') || block.name === 'wp_update_page' || block.name === 'wp_create_post') {
-          // For create/update, confirm success with ID — content is saved, don't re-check
-          const slim = { success: true, id: result.id, title: result.title?.rendered || result.title };
-          if (result.link) slim.link = result.link;
-          if (result.status) slim.status = result.status;
-          resultStr = JSON.stringify(slim);
-        } else {
-          resultStr = JSON.stringify(result);
-          if (resultStr.length > 4000) {
-            resultStr = resultStr.substring(0, 4000) + '... [truncated]';
-          }
-        }
-        
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: block.id,
-          content: resultStr,
-        });
+        toolBlocks.push(block);
       }
     }
+
+    // Execute all tool calls in parallel
+    const toolPromises = toolBlocks.map(async (block) => {
+      console.log(`    Tool: ${block.name}(${JSON.stringify(block.input).substring(0, 100)}...)`);
+      
+      // Loop detection — if same tool+target called 2+ times, force move on
+      const callKey = `${block.name}:${block.input.id || block.input.page_id || block.input.title || block.input.query || block.input.slug || 'nokey'}`;
+      toolCallCounts[callKey] = (toolCallCounts[callKey] || 0) + 1;
+      if (toolCallCounts[callKey] > 2) {
+        console.log(`    ⚠️ Loop detected: ${callKey} called ${toolCallCounts[callKey]} times, forcing success`);
+        return {
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: JSON.stringify({ success: true, note: 'Already saved successfully. Move on to the next task.' }),
+        };
+      }
+      
+      const result = await executeTool(block.name, block.input);
+      
+      // Update the current tool label for status polling
+      currentToolLabel = TOOL_LABELS[block.name] || 'WordPressing...';
+      
+      // Capture for build manifest (skip read-only calls)
+      if (!block.name.startsWith('wp_get_') && !block.name.startsWith('wp_list_')) {
+        const manifestEntry = { tool: block.name, input: block.input };
+        if (result.id) manifestEntry.resultId = result.id;
+        if (result.url) manifestEntry.resultUrl = result.url;
+        if (result.source_url) manifestEntry.resultUrl = result.source_url;
+        if (result.link) manifestEntry.resultLink = result.link;
+        if (result.title?.rendered) manifestEntry.resultTitle = result.title.rendered;
+        if (result.slug) manifestEntry.resultSlug = result.slug;
+        if (result.success !== undefined) manifestEntry.success = result.success;
+        if (result.error || result.code) manifestEntry.error = result.message || result.error || result.code;
+        buildManifest.push(manifestEntry);
+        emitBuildEvent('mutation', { tool: block.name, label: currentToolLabel, iteration: iterations });
+      }
+      
+      // Slim down responses to save context
+      let resultStr;
+      if (result.code || result.error) {
+        resultStr = JSON.stringify({ error: result.message || result.error || result.code });
+      } else if (block.name.startsWith('wp_create_') || block.name === 'wp_update_page' || block.name === 'wp_create_post') {
+        const slim = { success: true, id: result.id, title: result.title?.rendered || result.title };
+        if (result.link) slim.link = result.link;
+        if (result.status) slim.status = result.status;
+        resultStr = JSON.stringify(slim);
+      } else {
+        resultStr = JSON.stringify(result);
+        if (resultStr.length > 4000) {
+          resultStr = resultStr.substring(0, 4000) + '... [truncated]';
+        }
+      }
+      
+      return {
+        type: 'tool_result',
+        tool_use_id: block.id,
+        content: resultStr,
+      };
+    });
+
+    const resolvedResults = await Promise.all(toolPromises);
+    toolResults.push(...resolvedResults);
 
     // Add assistant response and tool results to messages
     messages.push({ role: 'assistant', content: response.content });
@@ -662,6 +674,100 @@ async function runAgentLoop(userMessages) {
   }
 
   return { reply: 'Reached maximum iterations. The site may be partially built.', iterations };
+}
+
+// ── OpenAI Agent Loop ────────────────────────────────────────────────────────
+
+// Convert Anthropic tool schema to OpenAI function format
+const openaiTools = tools.map(t => ({
+  type: 'function',
+  function: {
+    name: t.name,
+    description: t.description,
+    parameters: t.input_schema,
+  }
+}));
+
+async function runOpenAIAgentLoop(userMessages, modelName = 'gpt-5.4', tempOverride = null) {
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    ...userMessages,
+  ];
+  let iterations = 0;
+  const MAX_ITERATIONS = 15;
+  const toolCallCounts = {};
+  const buildManifest = [];
+
+  while (iterations < MAX_ITERATIONS) {
+    iterations++;
+    buildIteration = iterations;
+    console.log(`  [OpenAI] Agent loop iteration ${iterations}...`);
+
+    const response = await openaiClient.chat.completions.create({
+      model: modelName,
+      max_completion_tokens: 16384,
+      temperature: tempOverride ?? 0.9,
+      tools: openaiTools,
+      messages,
+    });
+
+    const choice = response.choices[0];
+
+    // Done?
+    if (choice.finish_reason === 'stop' || !choice.message.tool_calls?.length) {
+      return { reply: choice.message.content || 'Done!', iterations, manifest: buildManifest };
+    }
+
+    // Add assistant message with tool calls
+    messages.push(choice.message);
+
+    // Execute tool calls in parallel
+    const toolCalls = choice.message.tool_calls || [];
+    const toolPromises = toolCalls.map(async (tc) => {
+      const fnName = tc.function.name;
+      let input;
+      try { input = JSON.parse(tc.function.arguments); } catch { input = {}; }
+      
+      console.log(`    Tool: ${fnName}(${JSON.stringify(input).substring(0, 100)}...)`);
+      
+      const callKey = `${fnName}:${input.id || input.page_id || input.title || input.query || input.slug || 'nokey'}`;
+      toolCallCounts[callKey] = (toolCallCounts[callKey] || 0) + 1;
+      if (toolCallCounts[callKey] > 2) {
+        return { role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ success: true, note: 'Already saved. Move on.' }) };
+      }
+      
+      const result = await executeTool(fnName, input);
+      currentToolLabel = TOOL_LABELS[fnName] || 'WordPressing...';
+      
+      if (!fnName.startsWith('wp_get_') && !fnName.startsWith('wp_list_')) {
+        const me = { tool: fnName, input };
+        if (result.id) me.resultId = result.id;
+        if (result.url) me.resultUrl = result.url;
+        if (result.success !== undefined) me.success = result.success;
+        buildManifest.push(me);
+        emitBuildEvent('mutation', { tool: fnName, label: currentToolLabel, iteration: iterations });
+      }
+      
+      let resultStr;
+      if (result.code || result.error) {
+        resultStr = JSON.stringify({ error: result.message || result.error || result.code });
+      } else if (fnName.startsWith('wp_create_') || fnName === 'wp_update_page' || fnName === 'wp_create_post') {
+        const slim = { success: true, id: result.id, title: result.title?.rendered || result.title };
+        if (result.link) slim.link = result.link;
+        resultStr = JSON.stringify(slim);
+      } else {
+        resultStr = JSON.stringify(result);
+        if (resultStr.length > 4000) resultStr = resultStr.substring(0, 4000) + '... [truncated]';
+      }
+      
+      return { role: 'tool', tool_call_id: tc.id, content: resultStr };
+    });
+
+    const toolResults = await Promise.all(toolPromises);
+    messages.push(...toolResults);
+  }
+
+  return { reply: 'Reached maximum iterations.', iterations };
 }
 
 // ── Deep Merge Helper ────────────────────────────────────────────────────────
@@ -731,7 +837,7 @@ app.post('/build', (req, res) => {
     });
   }
 
-  const { messages } = req.body;
+  const { messages, model, temperature } = req.body;
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'messages array required' });
   }
@@ -757,7 +863,14 @@ app.post('/build', (req, res) => {
   console.log(`\n🦞 New build session: ${buildId}`);
   console.log(`   Prompt: ${userPrompt}`);
 
-  runAgentLoop(messages)
+  // Route to correct agent loop based on model
+  // Default to OpenAI (gpt-5.4). Use Anthropic only if explicitly requested.
+  const isAnthropic = model && model.startsWith('claude-');
+  const buildPromise = isAnthropic 
+    ? runAgentLoop(messages, model) 
+    : runOpenAIAgentLoop(messages, model || 'gpt-5.4', temperature || null);
+  
+  buildPromise
     .then(result => {
       console.log(`✅ ${buildId} complete in ${result.iterations} iterations`);
       logEntry.iterations = result.iterations;
